@@ -12,6 +12,7 @@ import os
 
 def create_app():
     app = Flask(__name__, static_folder='../frontend/build/static', static_url_path='/static')
+    app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'default_key_for_dev')
     app.config.from_object(Config)
     #app.config['DEBUG'] = True
 
