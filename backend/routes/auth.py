@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from models import db, User
-from flask_jwt_extended import create_access_token, jwt_required
+from flask_jwt_extended import create_access_token
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import os
@@ -9,45 +9,67 @@ auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/google-login', methods=['POST'])
 def google_login():
-    # Get the Google Client ID from the environment variable
-    GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
-    #https://flask-image-generator-e6y7.onrender.com
+    # Retrieve the CLIENT_ID from the environment
+    CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+    
+    if not CLIENT_ID:
+        return jsonify({"error": "Server misconfiguration: Missing CLIENT_ID"}), 500
+
+    # Extract the token from the request
     data = request.get_json()
     token = data.get('token')
 
     if not token:
-        return jsonify({"error": "Missing token"}), 400
+        return jsonify({"error": "Missing token in request"}), 400
 
     try:
-        # Verify the token with Google's ID token verifier
-        idinfo = id_token.verify_oauth2_token(
-            token,
-            google_requests.Request(),
-            GOOGLE_CLIENT_ID  # Replace with your Google client ID
-        )
+        # Verify the Google ID token
+        idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), CLIENT_ID)
+
+        # Optional: Verify the audience if multiple clients are allowed
+        # Example for multiple clients:
+        # allowed_clients = ["CLIENT_ID_1", "CLIENT_ID_2"]
+        # if idinfo['aud'] not in allowed_clients:
+        #     raise ValueError('Audience not allowed')
+
+        # Retrieve user information
         email = idinfo.get('email')
         if not email:
-            return jsonify({"error": "Google login did not return an email"}), 400
+            raise ValueError("Token verification failed: No email in token")
+
+        # Ensure the domain is valid if using Google Workspace
+        # domain_name = "yourdomain.com"
+        # if idinfo.get('hd') != domain_name:
+        #     raise ValueError("Token is not from the allowed domain")
 
         # Check if the user exists in the database
         user = User.query.filter_by(email=email).first()
         if not user:
-            # Create a new user if they don't exist
+            # If the user doesn't exist, create one
             user = User(email=email)
             db.session.add(user)
             db.session.commit()
 
-        # Generate a JWT access token for the user
-        access_token = create_access_token(identity=str(user.id), additional_claims={"email": user.email})
+        # Generate a JWT token for the user
+        access_token = create_access_token(identity=str(user.id), additional_claims={"email": email})
+
         return jsonify({
             "success": True,
             "token": access_token,
             "user": {
                 "id": user.id,
-                "username": user.username,
+                "username": user.username,  # Adjust based on your User model
                 "email": user.email
             }
         }), 200
+
+    except ValueError as e:
+        # Handle token validation failure
+        return jsonify({"error": "Invalid Google token", "details": str(e)}), 401
+    except Exception as e:
+        # Handle any other unexpected errors
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
 
     except ValueError as e:
         # Token validation failed
