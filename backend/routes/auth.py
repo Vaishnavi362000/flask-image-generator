@@ -1,43 +1,61 @@
 from flask import Blueprint, jsonify, request
 from models import db, User
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-import requests
+from flask_jwt_extended import create_access_token, jwt_required
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+import os
 
 auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/google-login', methods=['POST'])
 def google_login():
+    # Get the Google Client ID from the environment variable
+    GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+    #https://flask-image-generator-e6y7.onrender.com
     data = request.get_json()
     token = data.get('token')
 
-    # Verify the token with Google
-    response = requests.get(f'https://www.googleapis.com/oauth2/v3/userinfo?access_token={token}')
-    if response.status_code != 200:
-        return jsonify({"error": "Invalid token"}), 401
+    if not token:
+        return jsonify({"error": "Missing token"}), 400
 
-    user_info = response.json()
-    email = user_info.get('email')
+    try:
+        # Verify the token with Google's ID token verifier
+        idinfo = id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID  # Replace with your Google client ID
+        )
+        email = idinfo.get('email')
+        if not email:
+            return jsonify({"error": "Google login did not return an email"}), 400
 
-    # Check if the user already exists
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        # Create a new user if they don't exist
-        user = User(email=email)
-        user.set_password('random_password')  # Set a random password or handle it as needed
-        db.session.add(user)
-        db.session.commit()
+        # Check if the user exists in the database
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            # Create a new user if they don't exist
+            user = User(email=email)
+            db.session.add(user)
+            db.session.commit()
 
-    # Create a JWT token for the user
-    access_token = create_access_token(identity=str(user.id), additional_claims={"sub": str(user.id)})
-    return jsonify({
-        "success": True,
-        "token": access_token,
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email
-        }
-    }), 200
+        # Generate a JWT access token for the user
+        access_token = create_access_token(identity=str(user.id), additional_claims={"email": user.email})
+        return jsonify({
+            "success": True,
+            "token": access_token,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email
+            }
+        }), 200
+
+    except ValueError as e:
+        # Token validation failed
+        return jsonify({"error": "Invalid Google token"}), 401
+    except Exception as e:
+        # General server error
+        return jsonify({"error": str(e)}), 500
+
 
 
 @auth_bp.route('/register', methods=['POST'])
