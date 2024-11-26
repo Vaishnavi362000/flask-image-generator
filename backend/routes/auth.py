@@ -2,49 +2,68 @@ from flask import Blueprint, jsonify, request
 from models import db, User
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 import requests
+import os
 
 auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/google-login', methods=['POST'])
 def google_login():
+    # Retrieve the CLIENT_ID from the environment
+    CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+    
+    if not CLIENT_ID:
+        return jsonify({"error": "Server misconfiguration: Missing CLIENT_ID"}), 500
+
+    # Extract the access token from the request
     data = request.get_json()
     token = data.get('token')
 
-    # Verify the token with Google
-    response = requests.get(f'https://www.googleapis.com/oauth2/v3/userinfo?access_token={token}')
-    if response.status_code != 200:
-        return jsonify({"error": "Invalid token"}), 401
+    if not token:
+        return jsonify({"error": "Missing token in request"}), 400
 
-    user_info = response.json()
-    email = user_info.get('email')
+    try:
+        # Use the access token to fetch user info from Google's userinfo endpoint
+        userinfo_response = requests.get(
+            f'https://www.googleapis.com/oauth2/v3/userinfo?access_token={token}'
+        )
 
-    # Check if the user already exists
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        # Create a new user if they don't exist
-        user = User(email=email)
-        user.set_password('random_password')  # Set a random password or handle it as needed
-        db.session.add(user)
-        db.session.commit()
+        if userinfo_response.status_code != 200:
+            return jsonify({"error": "Failed to fetch user info from Google"}), 401
 
-    # Create a JWT token for the user
-    access_token = create_access_token(identity=str(user.id), additional_claims={"sub": str(user.id)})
-    return jsonify({
-        "success": True,
-        "token": access_token,
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email
-        }
-    }), 200
+        user_info = userinfo_response.json()
+        email = user_info.get('email')
+
+        if not email:
+            raise ValueError("Token verification failed: No email in user info")
+
+        # Check if the user exists in the database
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            # If the user doesn't exist, create one
+            user = User(email=email)
+            db.session.add(user)
+            db.session.commit()
+
+        # Generate a JWT token for the user
+        access_token = create_access_token(identity=str(user.id), additional_claims={"email": email})
+
+        return jsonify({
+            "success": True,
+            "token": access_token,
+            "user": {
+                "id": user.id,
+                "username": user.username,  # Adjust based on your User model
+                "email": user.email
+            }
+        }), 200
 
     except ValueError as e:
-        # Handle token validation failure
+        # Handle ValueError (e.g., missing email in user info)
         return jsonify({"error": "Invalid Google token", "details": str(e)}), 401
     except Exception as e:
-        # Handle any other unexpected errors
+        # Handle any unexpected errors
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
 
 
 
