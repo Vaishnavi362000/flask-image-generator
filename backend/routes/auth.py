@@ -71,14 +71,6 @@ def google_login():
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
 
-    except ValueError as e:
-        # Token validation failed
-        return jsonify({"error": "Invalid Google token"}), 401
-    except Exception as e:
-        # General server error
-        return jsonify({"error": str(e)}), 500
-
-
 
 @auth_bp.route('/register', methods=['POST'])
 def register():
