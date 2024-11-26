@@ -41,7 +41,7 @@ def create_app():
     # Update the CORS configuration
     CORS(app, resources={
         r"/*": {
-            "origins": ["http://localhost:3000", "http://127.0.0.1:5000"],
+            "origins": ["http://localhost:3000", "https://flask-image-generator-e6y7.onrender.com"],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"],
             "supports_credentials": True,
